@@ -29,7 +29,7 @@ subsistema sem mexer na UI. O roteiro "Chromium 2.0 em Rust":
 
 | Fase | Subsistema | Estado |
 |---|---|---|
-| M0 | Fachada `rumen-engine` + navegador funcional | ✅ validado em 13/10 (example.com, AUR, ArchWiki renderizando; abas e omnibox ok) |
+| M0 | Fachada `rumen-engine` + navegador funcional + release pública | ✅ validado em 13/10 (example.com, AUR, ArchWiki renderizando; abas e omnibox ok) |
 | M1 | Vendorizar o Servo em `crates/` (fork MPL-2.0) para editar o motor livremente | próximo |
 | M2 | Rede própria (`rumen-net`: hyper + rustls, cache HTTP, cookies persistentes, bloqueador de anúncios) | planejado |
 | M3 | Perfis, histórico e favoritos (SQLite) + sincronização opcional via servidor próprio (Hostinger/EasyPanel) | planejado |
@@ -125,13 +125,18 @@ windowrulev2 = workspace 6, class:^(rumen)$
 - **`ClientStorage` em `/tmp` falhava:** resolvido passando `Opts.config_dir` (perfil persistente).
 - Binário release: cerca de 120 MB. Build completa de 1 a 2 h; incremental de 2 a 10 min.
 
-## Distribuição (download "clicou, instalou")
-- Domínio grátis livre: **`rumen-browser.pages.dev`** (Cloudflare Pages). `github.com/rumen` pertence a outra pessoa;
-  o repositório seria `github.com/gustavofullstack/rumen`.
-- `site/index.html` (landing) + `site/install.sh` (instalador de um comando com verificação SHA-256).
-- `scripts/release.sh` gera `dist/rumen-x86_64-linux.tar.gz` + `SHA256SUMS` para o GitHub Releases
-  (o Pages tem limite de 25 MiB por arquivo; o binário tem cerca de 120 MB).
-- **Pendente de aprovação do dono:** tornar o repositório público, publicar a release e o Pages.
+## Distribuição — PUBLICADO em 13/10/2026
+- Repositório público: https://github.com/gustavofullstack/rumen (MPL-2.0)
+- Release v0.1.0: https://github.com/gustavofullstack/rumen/releases/tag/v0.1.0 (tar.gz de 45 MB + SHA256SUMS)
+- Site: https://gustavofullstack.github.io/rumen/ (branch `gh-pages` = conteúdo de `site/`)
+- Instalação de um comando, testada em um HOME limpo: `curl -fsSL https://gustavofullstack.github.io/rumen/install.sh | sh`
+- Domínio `rumen-browser.pages.dev` (Cloudflare Pages) reservado no plano. Para ativar, o dono roda
+  `npx wrangler login` uma vez e depois `npx wrangler pages deploy site --project-name rumen-browser`.
+- Nova versão: `cargo build --release -j2` → `scripts/release.sh` → `gh release create vX.Y.Z dist/*`
+  → `git subtree split --prefix site -b gh-pages && git push -f origin gh-pages`.
+- Logo atual: SVG vetorial (`packaging/rumen.svg`). A versão via Gemini/Nano Banana está agendada para quando
+  a cota do Antigravity resetar.
+- Planos: navegador gratuito para sempre. Serviços pagos (IA, hospedagem, sincronização) virão à parte.
 
 ## Ideias pedidas, ainda não implementadas
 - Comunicação criptografada integrada (ex.: Matrix/Olm ou Signal Protocol em Rust via `vodozemac`).
