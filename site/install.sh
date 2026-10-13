@@ -21,6 +21,7 @@ echo "→ Verificando integridade (SHA-256)..."
 tar -xzf "$tmp/$ASSET" -C "$tmp"
 install -Dm755 "$tmp/rumen/rumen" "$HOME/.local/bin/rumen"
 install -Dm644 "$tmp/rumen/rumen.desktop" "$HOME/.local/share/applications/rumen.desktop"
+sed -i "s#^Exec=rumen#Exec=$HOME/.local/bin/rumen#" "$HOME/.local/share/applications/rumen.desktop"
 install -Dm644 "$tmp/rumen/rumen.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/rumen.svg"
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 echo "✓ RUMEN instalado. Abra pelo menu ou rode: rumen"
