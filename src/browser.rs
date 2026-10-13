@@ -101,6 +101,8 @@ pub struct Browser {
     mode: Mode,
     waker: Box<dyn EventLoopWaker>,
     file_pick: RefCell<Option<(FilePicker, std::sync::mpsc::Receiver<PickResult>)>>,
+    /// Favicons já codificados como `data:image/png;base64,...`, por aba.
+    favicons: RefCell<std::collections::HashMap<rumen_engine::WebViewId, String>>,
 }
 
 impl Browser {
@@ -153,6 +155,7 @@ impl Browser {
             mode,
             waker,
             file_pick: RefCell::new(None),
+            favicons: RefCell::default(),
         });
         *browser.weak_self.borrow_mut() = Rc::downgrade(&browser);
 
@@ -465,7 +468,9 @@ impl Browser {
                     .page_title()
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| if internal { "Nova aba".into() } else { display_url.clone() });
+                let favicon = self.favicons.borrow().get(&t.id()).cloned();
                 serde_json::json!({
+                    "favicon": favicon,
                     "title": title,
                     "url": display_url,
                     "display_url": display_url,
@@ -948,6 +953,35 @@ impl Browser {
     }
 }
 
+/// Converte o favicon do motor em `data:` URL PNG (reduzido para 32 px) para a barra de abas.
+fn favicon_data_url(img: &rumen_engine::Image) -> Option<String> {
+    use base64::Engine as _;
+    use rumen_engine::PixelFormat;
+
+    let (w, h) = (img.width, img.height);
+    let px = (w * h) as usize;
+    let data = img.data();
+    let rgba: Vec<u8> = match img.format {
+        PixelFormat::RGBA8 => data.get(..px * 4)?.to_vec(),
+        PixelFormat::BGRA8 => data.get(..px * 4)?.chunks(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect(),
+        PixelFormat::RGB8 => data.get(..px * 3)?.chunks(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        PixelFormat::KA8 => data.get(..px * 2)?.chunks(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        PixelFormat::K8 => data.get(..px)?.iter().flat_map(|&k| [k, k, k, 255]).collect(),
+    };
+    let mut image = image::RgbaImage::from_raw(w, h, rgba)?;
+    if w > 32 || h > 32 {
+        image = image::imageops::resize(&image, 32, 32, image::imageops::FilterType::Triangle);
+    }
+    let mut png = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png)
+    ))
+}
+
 /// Domínios ENS (`.eth`) são resolvidos pelo gateway eth.limo.
 fn web3_gateway(url: Url) -> Url {
     match url.host_str() {
@@ -1022,7 +1056,22 @@ impl WebViewDelegate for Browser {
         }
     }
 
+    fn notify_favicon_changed(&self, webview: WebView) {
+        if self.is_ui(&webview) || self.is_popup(&webview) {
+            return;
+        }
+        let encoded = webview.favicon().and_then(|img| favicon_data_url(&img));
+        match encoded {
+            Some(url) => self.favicons.borrow_mut().insert(webview.id(), url),
+            None => self.favicons.borrow_mut().remove(&webview.id()),
+        };
+        self.mark_dirty();
+    }
+
     fn notify_load_status_changed(&self, webview: WebView, status: LoadStatus) {
+        if status == LoadStatus::Started {
+            self.favicons.borrow_mut().remove(&webview.id());
+        }
         tracing::debug!("load {:?} {:?} {:?}", webview.id(), status, webview.url());
         if !self.is_ui(&webview) {
             self.mark_dirty();

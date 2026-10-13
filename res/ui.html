@@ -37,6 +37,7 @@
     background: var(--muted);
   }
   .tab.loading .spin { background: var(--accent); }
+  .tab .fav { width: 16px; height: 16px; margin-right: 8px; flex: none; }
   .tab .x {
     width: 20px; height: 20px; border-radius: 50%; text-align: center; line-height: 20px;
     flex: none; font-size: 14px;
@@ -112,7 +113,12 @@
       const el = document.createElement("div");
       el.className = "tab" + (i === state.active ? " active" : "") + (t.loading ? " loading" : "");
       el.title = t.title || t.url;
-      const spin = document.createElement("div"); spin.className = "spin";
+      let spin;
+      if (t.favicon && !t.loading) {
+        spin = document.createElement("img"); spin.className = "fav"; spin.src = t.favicon;
+      } else {
+        spin = document.createElement("div"); spin.className = "spin";
+      }
       const title = document.createElement("div"); title.className = "title";
       title.textContent = t.title || t.url || "Nova aba";
       const x = document.createElement("div"); x.className = "x"; x.textContent = "×";

@@ -5156,9 +5156,11 @@ name = "rumen"
 version = "0.1.0"
 dependencies = [
  "ashpd",
+ "base64 0.22.1",
  "ctrlc",
  "dirs",
  "euclid",
+ "image",
  "rumen-engine",
  "rustls",
  "serde",
