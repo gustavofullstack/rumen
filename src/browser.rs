@@ -12,7 +12,8 @@ use std::rc::{Rc, Weak};
 use euclid::{Point2D, Rect, Scale, Size2D};
 use serde::Deserialize;
 use rumen_engine::{
-    ConsoleLogLevel, CreateNewWebViewRequest, EmbedderControl, EmbedderControlId, Cursor, DevicePoint, InputEvent, LoadStatus,
+    ConsoleLogLevel, CreateNewWebViewRequest, EmbedderControl, EmbedderControlId, EventLoopWaker,
+    FilePicker, Cursor, DevicePoint, InputEvent, LoadStatus,
     MouseButton, MouseButtonAction, MouseButtonEvent, MouseLeftViewportEvent, MouseMoveEvent,
     OffscreenRenderingContext, RenderingContext, Servo, Theme, WebView, WebViewBuilder,
     WebViewDelegate, WheelDelta, WheelEvent, WheelMode, WindowRenderingContext,
@@ -23,6 +24,7 @@ use winit::event::{ElementState, KeyEvent, MouseScrollDelta};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey as WinitNamedKey};
 use winit::window::{CursorIcon, Fullscreen, Window};
 
+use crate::filepicker::{self, PickResult};
 use crate::keyutils::keyboard_event_from_winit;
 use crate::mode::{self, Mode};
 use crate::popup::{Layout, Popup};
@@ -97,6 +99,8 @@ pub struct Browser {
     quit: Cell<bool>,
     weak_self: RefCell<Weak<Browser>>,
     mode: Mode,
+    waker: Box<dyn EventLoopWaker>,
+    file_pick: RefCell<Option<(FilePicker, std::sync::mpsc::Receiver<PickResult>)>>,
 }
 
 impl Browser {
@@ -107,6 +111,7 @@ impl Browser {
         resources: Resources,
         initial_urls: Vec<Url>,
         mode: Mode,
+        waker: Box<dyn EventLoopWaker>,
     ) -> Rc<Self> {
         let size = window.inner_size();
         let ui_h = ui_height_px(window.scale_factor());
@@ -146,6 +151,8 @@ impl Browser {
             quit: Cell::new(false),
             weak_self: RefCell::new(Weak::new()),
             mode,
+            waker,
+            file_pick: RefCell::new(None),
         });
         *browser.weak_self.borrow_mut() = Rc::downgrade(&browser);
 
@@ -297,6 +304,7 @@ impl Browser {
     /// Executa comandos pendentes e sincroniza a interface. Chamado após cada
     /// `spin_event_loop`, fora de callbacks do Servo.
     pub fn flush(&self) {
+        self.poll_file_pick();
         let commands: Vec<Command> = std::mem::take(&mut *self.commands.borrow_mut());
         for command in commands {
             self.run(command);
@@ -492,6 +500,22 @@ impl Browser {
         }
         if let Some(tab) = self.active_tab() {
             tab.set_focused(true);
+        }
+    }
+
+    fn poll_file_pick(&self) {
+        let done = match self.file_pick.borrow().as_ref() {
+            Some((_, rx)) => rx.try_recv().ok(),
+            None => None,
+        };
+        let Some(result) = done else { return };
+        let Some((mut picker, _)) = self.file_pick.borrow_mut().take() else { return };
+        match result {
+            Some(paths) => {
+                picker.select(&paths);
+                picker.submit();
+            },
+            None => picker.dismiss(),
         }
     }
 
@@ -1053,6 +1077,22 @@ impl WebViewDelegate for Browser {
         if !is_active {
             return; // descartar = cancelar
         }
+        let control = match control {
+            EmbedderControl::FilePicker(picker) => {
+                if self.file_pick.borrow().is_some() {
+                    return; // já há um diálogo aberto; descartar = cancelar
+                }
+                let patterns = picker.filter_patterns().iter().map(|p| p.0.clone()).collect();
+                let rx = filepicker::spawn(
+                    picker.allow_select_multiple(),
+                    patterns,
+                    self.waker.clone_box(),
+                );
+                *self.file_pick.borrow_mut() = Some((picker, rx));
+                return;
+            },
+            other => other,
+        };
         if let Some(popup) = Popup::from_control(control, &self.popup_layout()) {
             if let Some(old) = self.popup.borrow_mut().replace(popup) {
                 old.cancel();

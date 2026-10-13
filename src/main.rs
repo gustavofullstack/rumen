@@ -5,6 +5,7 @@
 //! RUMEN — navegador no estilo Chromium escrito em Rust, usando o motor Servo.
 
 mod browser;
+mod filepicker;
 mod keyutils;
 mod mode;
 mod popup;
@@ -139,7 +140,7 @@ impl ApplicationHandler<WakerEvent> for App {
             urls = vec![resources.newtab_url()];
         }
         let browser =
-            Browser::new(window, servo, rendering_context, resources, urls, session.mode);
+            Browser::new(window, servo, rendering_context, resources, urls, session.mode, waker.clone_box());
         *self = Self::Running(browser, session);
     }
 

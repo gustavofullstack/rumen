@@ -85,6 +85,9 @@ rumen/
   - **Tor** (`--tor`, Ctrl+Shift+O): privado + o RUMEN inicia o próprio `tor` (HTTPTunnelPort 9481) e
     passa todo o tráfego por ele. Abre `.onion`. Sem Tor instalado, a rede fica bloqueada (proxy morto)
     para não vazar o IP. **Requer `sudo pacman -S tor`.**
+- **Seletor de arquivos nativo** (`src/filepicker.rs`): `<input type=file>` abre o diálogo do sistema via portal XDG
+  (`ashpd`, numa thread separada). Verificado: o diálogo abre, o navegador não trava, e fechar o navegador fecha o
+  diálogo. Ainda não verificado: escolher um arquivo e o envio (não há ferramenta de entrada no ambiente de teste).
 - **Web3:** `ipfs://` e `ipns://` (gateway dweb.link com isolamento por subdomínio) e `.eth` (eth.limo).
 - Tema escuro; app-id `rumen` para regras do Hyprland
 
@@ -105,7 +108,7 @@ windowrulev2 = workspace 6, class:^(rumen)$
 ```
 
 ## O que ainda falta (backlog por prioridade)
-1. **Seletor de arquivos e de cor**: hoje são cancelados. Usar o portal XDG (`ashpd`) para o seletor nativo.
+1. **Seletor de cor** (`<input type=color>`): hoje é cancelado.
 2. **Downloads**: Servo 0.7 tem suporte limitado; interceptar via `load_web_resource`.
 3. **Favicons** nas abas (`webview.favicon()` → PNG base64 → UI).
 4. **Histórico/favoritos** com SQLite (`rusqlite`) + sugestões na omnibox.
