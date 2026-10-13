@@ -1,0 +1,9 @@
+[package]
+name = "rumen-engine"
+version = "0.1.0"
+edition = "2024"
+description = "Motor do RUMEN: fachada própria sobre os componentes Rust do Servo (layout, estilo, WebRender, rede)"
+license = "MPL-2.0"
+
+[dependencies]
+servo = "=0.7.0"

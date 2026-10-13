@@ -1,0 +1,33 @@
+[package]
+name = "rumen"
+version = "0.1.0"
+edition = "2024"
+description = "RUMEN — navegador estilo Chromium escrito em Rust (motor RUMEN Engine) para CachyOS/Arch"
+license = "MPL-2.0"
+
+[dependencies]
+rumen-engine = { path = "crates/rumen-engine" }
+euclid = "0.22"
+url = "2.5"
+winit = "0.30.13"
+rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12", "aws_lc_rs"] }
+tracing = "0.1.44"
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ctrlc = { version = "3", features = ["termination"] }
+
+[workspace]
+members = ["crates/rumen-engine"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+debug = false
+strip = true
+
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 3

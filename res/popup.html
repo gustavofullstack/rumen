@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>RUMEN Popup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%; overflow: hidden; background: #2b2e33; color: #e8eaed;
+    font: 13px "Inter", "Noto Sans", "DejaVu Sans", sans-serif; user-select: none;
+  }
+  body { border: 1px solid #44484e; border-radius: 8px; }
+  .list { height: 100%; overflow-y: auto; padding: 4px 0; }
+  .item { height: 28px; line-height: 28px; padding: 0 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item.hl { background: #3c4148; }
+  .item.sel { color: #00c896; }
+  .item.off { color: #5f6368; }
+  .group { height: 24px; line-height: 24px; padding: 0 10px; color: #9aa0a6; font-size: 12px; font-weight: 600; }
+  .grouped { padding-left: 24px; }
+  .sep { height: 1px; background: #44484e; margin: 4px 0; }
+  .dialog { padding: 18px 20px; display: flex; flex-direction: column; height: 100%; gap: 12px; }
+  .origin { font-weight: 600; font-size: 14px; }
+  .msg { flex: 1; overflow: auto; white-space: pre-wrap; word-break: break-word; color: #c4c7c5; }
+  input {
+    height: 32px; border-radius: 6px; border: 1px solid #5f6368; background: #1f2124;
+    color: #e8eaed; padding: 0 10px; font-size: 13px; outline: none;
+  }
+  input:focus { border-color: #00c896; }
+  .buttons { display: flex; justify-content: flex-end; gap: 8px; }
+  button {
+    height: 32px; padding: 0 18px; border-radius: 16px; border: 1px solid #5f6368;
+    background: transparent; color: #00c896; font-size: 13px;
+  }
+  button.primary { background: #00c896; border-color: #00c896; color: #10241e; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+  const send = (cmd, extra) => console.log("RUMEN:" + JSON.stringify(Object.assign({ cmd }, extra || {})));
+  const root = document.getElementById("root");
+  let keyHandler = null;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  // Lista navegável por teclado, usada por <select> e pelo menu de contexto.
+  function list(entries, onPick) {
+    const box = el("div", "list");
+    const rows = [];
+    let hl = -1;
+    const setHl = (i) => {
+      if (hl >= 0) rows[hl].el.classList.remove("hl");
+      hl = i;
+      if (hl >= 0) { rows[hl].el.classList.add("hl"); rows[hl].el.scrollIntoView({ block: "nearest" }); }
+    };
+    entries.forEach((e) => {
+      if (e.type === "sep") { box.append(el("div", "sep")); return; }
+      if (e.type === "group") { box.append(el("div", "group", e.label)); return; }
+      const row = el("div", "item" + (e.selected ? " sel" : "") + (e.enabled ? "" : " off") + (e.grouped ? " grouped" : ""), e.label || " ");
+      const idx = rows.length;
+      if (e.enabled) {
+        rows.push({ el: row, value: e.value });
+        row.onmousemove = () => setHl(idx);
+        row.onmouseup = () => onPick(e.value);
+      }
+      box.append(row);
+    });
+    const start = entries.filter((e) => e.enabled && e.type !== "sep" && e.type !== "group").findIndex((e) => e.selected);
+    keyHandler = (ev) => {
+      if (ev.key === "ArrowDown") setHl(Math.min(rows.length - 1, hl + 1));
+      else if (ev.key === "ArrowUp") setHl(Math.max(0, hl - 1));
+      else if (ev.key === "Enter" && hl >= 0) onPick(rows[hl].value);
+      else return;
+      ev.preventDefault();
+    };
+    root.append(box);
+    if (rows.length) setHl(Math.max(0, start));
+  }
+
+  function dialog(d) {
+    const box = el("div", "dialog");
+    box.append(el("div", "origin", d.origin ? d.origin + " diz" : "Esta página diz"));
+    box.append(el("div", "msg", d.message));
+    let input = null;
+    if (d.kind === "prompt") {
+      input = el("input");
+      input.value = d.value || "";
+      box.append(input);
+    }
+    const buttons = el("div", "buttons");
+    const ok = el("button", "primary", "OK");
+    ok.onclick = () => send("popup_result", { ok: true, value: input ? input.value : null });
+    if (d.kind !== "alert") {
+      const cancel = el("button", "", "Cancelar");
+      cancel.onclick = () => send("popup_result", { ok: false });
+      buttons.append(cancel);
+    }
+    buttons.append(ok);
+    box.append(buttons);
+    root.append(box);
+    keyHandler = (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); ok.onclick(); }
+    };
+    setTimeout(() => (input || ok).focus(), 0);
+  }
+
+  document.addEventListener("keydown", (ev) => keyHandler && keyHandler(ev));
+  document.addEventListener("contextmenu", (ev) => ev.preventDefault());
+
+  window.rumenPopup = {
+    show(p) {
+      root.textContent = "";
+      keyHandler = null;
+      if (p.kind === "select" || p.kind === "menu") {
+        list(p.entries, (value) => send("popup_result", { ok: true, value }));
+      } else {
+        dialog(p);
+      }
+    },
+  };
+  send("popup_ready");
+</script>
+</body>
+</html>

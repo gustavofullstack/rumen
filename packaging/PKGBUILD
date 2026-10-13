@@ -1,0 +1,24 @@
+# Maintainer: Gustavo <147890923+gustavofullstack@users.noreply.github.com>
+# Build local: cd packaging && makepkg -si
+pkgname=rumen-browser
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Navegador estilo Chromium escrito em Rust com o motor Servo"
+arch=('x86_64')
+license=('MPL-2.0')
+depends=('fontconfig' 'freetype2' 'libxkbcommon' 'wayland' 'libx11' 'libglvnd'
+         'mesa' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'harfbuzz')
+makedepends=('rustup' 'clang' 'python')
+options=('!lto' '!debug')
+
+build() {
+  cd "$startdir/.."
+  cargo build --release --locked
+}
+
+package() {
+  cd "$startdir/.."
+  install -Dm755 target/release/rumen "$pkgdir/usr/bin/rumen"
+  install -Dm644 packaging/rumen.desktop "$pkgdir/usr/share/applications/rumen.desktop"
+  install -Dm644 packaging/rumen.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/rumen.svg"
+}

@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>RUMEN UI</title>
+<style>
+  :root {
+    --bg: #1f2124;
+    --strip: #16181a;
+    --tab: #2b2e33;
+    --tab-hover: #24272b;
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --accent: #00c896;
+    --omni: #303338;
+    --omni-focus: #3a3e44;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 76px; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 13px "Inter", "Noto Sans", "DejaVu Sans", sans-serif; user-select: none;
+  }
+  #strip {
+    height: 36px; background: var(--strip); display: flex; align-items: flex-end;
+    padding: 0 8px; gap: 2px;
+  }
+  .tab {
+    flex: 0 1 220px; min-width: 48px; height: 30px; display: flex; align-items: center;
+    padding: 0 6px 0 12px; border-radius: 8px 8px 0 0; color: var(--muted);
+    cursor: default; overflow: hidden; position: relative;
+  }
+  .tab:hover { background: var(--tab-hover); }
+  .tab.active { background: var(--bg); color: var(--text); }
+  .tab .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab .spin {
+    width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; flex: none;
+    background: var(--muted);
+  }
+  .tab.loading .spin { background: var(--accent); }
+  .tab .x {
+    width: 20px; height: 20px; border-radius: 50%; text-align: center; line-height: 20px;
+    flex: none; font-size: 14px;
+  }
+  .tab .x:hover { background: #44484e; color: var(--text); }
+  #newtab {
+    width: 28px; height: 28px; margin: 0 0 2px 4px; border-radius: 50%; text-align: center;
+    line-height: 28px; font-size: 18px; color: var(--muted); flex: none;
+  }
+  #newtab:hover { background: var(--tab); color: var(--text); }
+  #bar { height: 40px; display: flex; align-items: center; padding: 0 8px; gap: 4px; }
+  .btn {
+    width: 32px; height: 32px; border-radius: 50%; text-align: center; line-height: 32px;
+    font-size: 16px; color: var(--text); flex: none;
+  }
+  .btn:hover { background: var(--tab); }
+  .btn.off { color: #5f6368; }
+  .btn.off:hover { background: transparent; }
+  #omni {
+    flex: 1; height: 32px; border-radius: 16px; border: 2px solid transparent;
+    background: var(--omni); color: var(--text); padding: 0 14px; font-size: 14px;
+    outline: none;
+  }
+  #omni:focus { background: var(--omni-focus); border-color: var(--accent); }
+  #mode { display: none; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 12px; flex: none; }
+  #mode.private { display: block; background: #5b3cc4; color: #fff; }
+  #mode.tor { display: block; background: #7d4698; color: #fff; }
+  #zoom { color: var(--muted); font-size: 12px; padding: 0 6px; }
+  #progress { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--accent); width: 0; }
+</style>
+</head>
+<body>
+<div id="strip"><div id="newtab" title="Nova aba (Ctrl+T)">+</div></div>
+<div id="bar">
+  <div class="btn off" id="back" title="Voltar (Alt+←)">&#8592;</div>
+  <div class="btn off" id="fwd" title="Avançar (Alt+→)">&#8594;</div>
+  <div class="btn" id="reload" title="Recarregar (Ctrl+R)">&#8635;</div>
+  <div class="btn" id="home" title="Página inicial">&#8962;</div>
+  <span id="mode"></span>
+  <input id="omni" spellcheck="false" placeholder="Pesquise no DuckDuckGo ou digite um URL">
+  <span id="zoom"></span>
+</div>
+<div id="progress"></div>
+<script>
+  const send = (cmd, extra) => console.log("RUMEN:" + JSON.stringify(Object.assign({ cmd }, extra || {})));
+  const $ = (id) => document.getElementById(id);
+  const omni = $("omni");
+  let editing = false;
+  let state = { tabs: [], active: 0 };
+
+  $("newtab").onclick = () => send("new_tab");
+  $("back").onclick = () => send("back");
+  $("fwd").onclick = () => send("forward");
+  $("reload").onclick = () => send(state.tabs[state.active] && state.tabs[state.active].loading ? "stop" : "reload");
+  $("home").onclick = () => send("home");
+
+  omni.addEventListener("focus", () => { editing = true; omni.select(); });
+  omni.addEventListener("blur", () => { editing = false; render(); });
+  omni.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const v = omni.value.trim();
+      if (v) send("navigate", { input: v });
+      editing = false; omni.blur();
+    } else if (e.key === "Escape") {
+      editing = false; omni.blur(); render(); send("focus_content");
+    }
+  });
+
+  function render() {
+    const strip = $("strip");
+    strip.querySelectorAll(".tab").forEach((t) => t.remove());
+    state.tabs.forEach((t, i) => {
+      const el = document.createElement("div");
+      el.className = "tab" + (i === state.active ? " active" : "") + (t.loading ? " loading" : "");
+      el.title = t.title || t.url;
+      const spin = document.createElement("div"); spin.className = "spin";
+      const title = document.createElement("div"); title.className = "title";
+      title.textContent = t.title || t.url || "Nova aba";
+      const x = document.createElement("div"); x.className = "x"; x.textContent = "×";
+      x.onmousedown = (e) => { e.stopPropagation(); send("close_tab", { index: i }); };
+      el.onmousedown = (e) => {
+        if (e.button === 1) send("close_tab", { index: i });
+        else send("select_tab", { index: i });
+      };
+      el.append(spin, title, x);
+      strip.insertBefore(el, $("newtab"));
+    });
+    const cur = state.tabs[state.active] || {};
+    $("back").className = "btn" + (cur.can_back ? "" : " off");
+    $("fwd").className = "btn" + (cur.can_fwd ? "" : " off");
+    $("reload").innerHTML = cur.loading ? "&#10005;" : "&#8635;";
+    $("zoom").textContent = cur.zoom && Math.abs(cur.zoom - 1) > 0.01 ? Math.round(cur.zoom * 100) + "%" : "";
+    $("progress").style.width = cur.loading ? "60%" : "0";
+    if (!editing) omni.value = cur.display_url || "";
+    const mode = $("mode");
+    mode.className = state.mode || "";
+    mode.textContent = state.mode === "tor" ? "Tor" : state.mode === "private" ? "Privada" : "";
+  }
+
+  window.rumen = {
+    update(s) { state = s; render(); },
+    focusOmnibox() { omni.focus(); omni.select(); },
+  };
+  send("ui_ready");
+</script>
+</body>
+</html>

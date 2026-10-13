@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Nova aba</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; background: #1f2124; color: #e8eaed;
+    font: 15px "Inter", "Noto Sans", "DejaVu Sans", sans-serif;
+  }
+  main { display: flex; flex-direction: column; align-items: center; padding-top: 18vh; }
+  h1 { font-size: 56px; font-weight: 700; letter-spacing: -1px; margin: 0 0 28px; }
+  h1 span { color: #00c896; }
+  form { width: min(584px, 90vw); }
+  input {
+    width: 100%; height: 46px; border-radius: 23px; border: 1px solid #3c4043;
+    background: #303338; color: #e8eaed; padding: 0 22px; font-size: 16px; outline: none;
+  }
+  input:focus { border-color: #00c896; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-top: 36px; width: min(584px, 90vw); }
+  .tiles a {
+    width: 104px; height: 96px; border-radius: 12px; background: #2b2e33; color: #e8eaed;
+    text-decoration: none; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 8px; font-size: 12px;
+  }
+  .tiles a:hover { background: #35393f; }
+  .tiles b {
+    width: 40px; height: 40px; border-radius: 50%; background: #3c4043; display: flex;
+    align-items: center; justify-content: center; font-size: 17px;
+  }
+  footer { position: fixed; bottom: 14px; width: 100%; text-align: center; color: #5f6368; font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>RU<span>MEN</span></h1>
+  <form action="https://duckduckgo.com/html/" method="get">
+    <input name="q" autofocus placeholder="Pesquisar na web">
+  </form>
+  <div class="tiles">
+    <a href="https://wiki.cachyos.org/"><b>C</b>CachyOS Wiki</a>
+    <a href="https://wiki.archlinux.org/"><b>A</b>ArchWiki</a>
+    <a href="https://aur.archlinux.org/"><b>U</b>AUR</a>
+    <a href="https://github.com/"><b>G</b>GitHub</a>
+    <a href="https://servo.org/"><b>S</b>Servo</a>
+    <a href="https://en.wikipedia.org/"><b>W</b>Wikipedia</a>
+  </div>
+</main>
+<footer>RUMEN · navegador em Rust com motor Servo · CachyOS / Arch Linux</footer>
+</body>
+</html>
