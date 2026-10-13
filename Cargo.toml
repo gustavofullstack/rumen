@@ -1,6 +1,6 @@
 [package]
 name = "rumen"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "RUMEN — navegador estilo Chromium escrito em Rust (motor RUMEN Engine) para CachyOS/Arch"
 license = "MPL-2.0"

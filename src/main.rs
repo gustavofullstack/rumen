@@ -5,8 +5,10 @@
 //! RUMEN — navegador no estilo Chromium escrito em Rust, usando o motor Servo.
 
 mod browser;
+mod control;
 mod filepicker;
 mod keyutils;
+mod mcp;
 mod mode;
 mod popup;
 mod resources;
@@ -34,6 +36,11 @@ use crate::resources::Resources;
 
 const APP_ID: &str = "rumen";
 
+/// App-id da janela; `RUMEN_APP_ID` permite instâncias de teste isoladas (ex.: "rumen-test").
+fn app_id() -> String {
+    std::env::var("RUMEN_APP_ID").unwrap_or_else(|_| APP_ID.to_owned())
+}
+
 static TERMINATE: AtomicBool = AtomicBool::new(false);
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -46,6 +53,26 @@ fn main() -> Result<(), Box<dyn Error>> {
             rumen_engine::UPSTREAM
         );
         return Ok(());
+    }
+
+    match std::env::args().nth(1).as_deref() {
+        // Servidor MCP (stdio) para agentes controlarem o RUMEN aberto.
+        Some("mcp") => {
+            mcp::run();
+            return Ok(());
+        },
+        // `rumen ctl '{"cmd":"tabs"}'`: um comando direto no socket de controle.
+        Some("ctl") => {
+            let raw = std::env::args().nth(2).unwrap_or_else(|| r#"{"cmd":"ping"}"#.into());
+            let cmd: serde_json::Value = serde_json::from_str(&raw)?;
+            println!("{}", serde_json::to_string_pretty(&control::send(&cmd)?)?);
+            return Ok(());
+        },
+        _ => {},
+    }
+
+    if std::env::var_os("RUMEN_CHILD").is_none() && !std::env::args().any(|a| a == "--no-supervisor") {
+        return supervise();
     }
 
     rustls::crypto::aws_lc_rs::default_provider()
@@ -62,6 +89,71 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::Initial(Waker(event_loop.create_proxy()));
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+/// Supervisor: roda o navegador como processo filho e, se ele travar (pânico, sinal do
+/// sistema), reabre com as abas salvas. Uma saída normal (fechar a janela, Ctrl+Shift+Q)
+/// encerra de verdade. Proteção contra laço: no máximo 5 reaberturas em 2 minutos.
+fn supervise() -> Result<(), Box<dyn Error>> {
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    let exe = std::env::current_exe()?;
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let child_pid = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    {
+        // Encaminha SIGINT/SIGTERM ao filho, que salva a sessão e sai limpo.
+        let child_pid = child_pid.clone();
+        let _ = ctrlc::set_handler(move || {
+            TERMINATE.store(true, Ordering::SeqCst);
+            let pid = child_pid.load(Ordering::SeqCst);
+            if pid != 0 {
+                let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+            }
+        });
+    }
+    let mut restarts: Vec<Instant> = Vec::new();
+    loop {
+        let mut child = Command::new(&exe).args(&args).env("RUMEN_CHILD", "1").spawn()?;
+        child_pid.store(child.id(), Ordering::SeqCst);
+        let status = child.wait()?;
+        child_pid.store(0, Ordering::SeqCst);
+        if status.success() || TERMINATE.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        restarts.retain(|t| t.elapsed() < Duration::from_secs(120));
+        if restarts.len() >= 5 {
+            eprintln!("RUMEN: travou 5 vezes em 2 minutos; não vou reabrir automaticamente.");
+            std::process::exit(1);
+        }
+        restarts.push(Instant::now());
+        eprintln!("RUMEN: o navegador fechou inesperadamente ({status}); reabrindo com suas abas…");
+        // Reabre restaurando a sessão salva (sem as URLs da linha de comando).
+        args.retain(|a| a.starts_with('-'));
+        std::thread::sleep(Duration::from_millis(800));
+    }
+}
+
+/// No Wayland, com o intervalo de troca padrão (1), o Mesa bloqueia `eglSwapBuffers` até o
+/// compositor mandar o "frame callback", que nunca chega enquanto a janela está numa mesa
+/// escondida. Isso congelava o navegador inteiro (inclusive o socket de controle e o
+/// encerramento limpo). Com intervalo 0 a troca não bloqueia; o ritmo de pintura continua
+/// sendo dado pelos pedidos de redesenho do motor.
+fn disable_vsync_block() {
+    use std::ffi::c_void;
+    #[link(name = "EGL")]
+    unsafe extern "C" {
+        fn eglGetCurrentDisplay() -> *mut c_void;
+        fn eglSwapInterval(display: *mut c_void, interval: i32) -> u32;
+    }
+    // SAFETY: chamadas EGL sem argumentos de ponteiro do Rust; o display é o atual do contexto
+    // que acabou de ser tornado corrente nesta thread.
+    unsafe {
+        let display = eglGetCurrentDisplay();
+        if !display.is_null() && eglSwapInterval(display, 0) == 0 {
+            warn!("eglSwapInterval(0) falhou; janela escondida pode congelar a pintura");
+        }
+    }
 }
 
 /// URLs passadas na linha de comando; sem argumentos, restaura a sessão anterior.
@@ -88,14 +180,6 @@ fn initial_urls(resources: &Resources) -> Vec<Url> {
         .collect()
 }
 
-fn save_session(browser: &Browser) {
-    let urls = browser.session_urls();
-    let path = data_dir().join("session.json");
-    if let Err(e) = fs::write(&path, serde_json::to_string_pretty(&urls).unwrap_or_default()) {
-        warn!("não foi possível salvar a sessão em {path:?}: {e}");
-    }
-}
-
 enum App {
     Initial(Waker),
     // A ordem importa: o navegador é destruído antes da sessão (perfil temporário, Tor).
@@ -112,8 +196,9 @@ impl ApplicationHandler<WakerEvent> for App {
             .with_inner_size(LogicalSize::new(1280.0, 800.0))
             .with_min_inner_size(LogicalSize::new(400.0, 200.0));
         // Define o app-id (Wayland) / WM_CLASS (X11) para regras do Hyprland.
-        let attributes = WindowAttributesExtWayland::with_name(attributes, APP_ID, APP_ID);
-        let attributes = WindowAttributesExtX11::with_name(attributes, APP_ID, APP_ID);
+        let id = app_id();
+        let attributes = WindowAttributesExtWayland::with_name(attributes, &id, &id);
+        let attributes = WindowAttributesExtX11::with_name(attributes, &id, &id);
         let window = event_loop
             .create_window(attributes)
             .expect("falha ao criar janela");
@@ -125,6 +210,7 @@ impl ApplicationHandler<WakerEvent> for App {
                 .expect("falha ao criar contexto OpenGL"),
         );
         let _ = rendering_context.make_current();
+        disable_vsync_block();
 
         let session = Session::start(Mode::from_args());
         let servo = rumen_engine::build(Box::new(waker.clone()), &session.config);
@@ -141,6 +227,12 @@ impl ApplicationHandler<WakerEvent> for App {
         }
         let browser =
             Browser::new(window, servo, rendering_context, resources, urls, session.mode, waker.clone_box());
+        // Só a janela normal aceita controle externo (privada/Tor ficam fechadas a isso).
+        if session.mode.persistent() {
+            if let Some(rx) = control::listen(waker.clone_box()) {
+                browser.attach_control(rx);
+            }
+        }
         *self = Self::Running(browser, session);
     }
 
@@ -168,6 +260,7 @@ impl ApplicationHandler<WakerEvent> for App {
                 return;
             },
             WindowEvent::RedrawRequested => browser.paint(),
+            WindowEvent::Occluded(hidden) => browser.set_occluded(hidden),
             WindowEvent::Resized(size) => browser.resize(size),
             WindowEvent::ScaleFactorChanged { .. } => browser.rescale(),
             WindowEvent::CursorMoved { position, .. } => browser.on_cursor_moved(position),
@@ -189,9 +282,7 @@ impl ApplicationHandler<WakerEvent> for App {
 impl App {
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
         if let Self::Running(browser, session) = std::mem::replace(self, Self::Done) {
-            if session.mode.persistent() {
-                save_session(&browser);
-            }
+            browser.save_session();
             drop(browser);
             drop(session);
         }

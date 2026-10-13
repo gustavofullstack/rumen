@@ -25,7 +25,16 @@ O instalador baixa a última release, confere o SHA-256 e instala em `~/.local/b
 | **Navegação privada** | `Ctrl+Shift+N` ou `rumen --private`. Perfil em RAM, apagado ao fechar. |
 | **Modo Tor** | `Ctrl+Shift+O` ou `rumen --tor`. Todo o tráfego passa pelo Tor, com acesso a `.onion`. Se o Tor não estiver disponível, a rede é bloqueada para não vazar o IP. Requer o pacote `tor`. |
 | **Web3** | `ipfs://`, `ipns://` e domínios `.eth` direto na barra de endereço |
+| **Nunca fecha sozinho** | Fechar a última aba abre uma aba nova. Se o processo travar, um supervisor reabre o navegador com suas abas. Para sair de propósito: `Ctrl+Shift+Q` ou fechar a janela. |
+| **Seus dados salvos** | Abas salvas a cada mudança (`~/.local/share/rumen/session.json`); cookies, logins e localStorage no perfil persistente. |
+| **Controle por agentes (MCP)** | `rumen mcp` expõe o navegador aberto como ferramentas (abrir abas, ler páginas, rodar JS, recarregar a interface ao vivo). `rumen ctl '{"cmd":"tabs"}'` para scripts. Socket local `0600`. |
 | **Interface estilo Chromium** | Abas, omnibox, atalhos (`Ctrl+T/W/L/Tab`, `Alt+←/→`, `F11`…), zoom |
+
+## Usar com o Claude Code (MCP)
+
+```sh
+claude mcp add --scope user rumen -- ~/.local/bin/rumen mcp
+```
 
 ## Compilar
 

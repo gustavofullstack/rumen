@@ -88,6 +88,20 @@ rumen/
 - **Seletor de arquivos nativo** (`src/filepicker.rs`): `<input type=file>` abre o diálogo do sistema via portal XDG
   (`ashpd`, numa thread separada). Verificado: o diálogo abre, o navegador não trava, e fechar o navegador fecha o
   diálogo. Ainda não verificado: escolher um arquivo e o envio (não há ferramenta de entrada no ambiente de teste).
+- **Nunca fecha sozinho** (v0.1.1): última aba fechada abre uma aba nova; `Ctrl+Q` não sai mais (sair = `Ctrl+Shift+Q`
+  ou fechar a janela). **Supervisor** (`main.rs::supervise`): o processo pai reabre o filho se ele morrer de forma anormal,
+  com a sessão restaurada (máximo de 5 vezes em 2 min). Testado com SIGKILL.
+- **Sessão salva a cada mudança** (escrita atômica, no máximo a cada 2 s). Testado.
+- **Congelamento com janela escondida corrigido:** o Mesa no Wayland bloqueava `eglSwapBuffers` sem frame callback (outra
+  mesa). Agora usa `eglSwapInterval(0)` + `WindowEvent::Occluded` (não pinta escondido). Testado em `special:` workspace.
+- **Controle externo** (`src/control.rs`): socket `$XDG_RUNTIME_DIR/rumen.sock` (0600, só modo normal). Comandos: ping, tabs,
+  open, select, close, back, forward, reload, eval, text, reload_ui. CLI: `rumen ctl '<json>'`.
+- **MCP** (`src/mcp.rs`): `rumen mcp` (stdio, JSON-RPC), 9 ferramentas `rumen_*`; abre o RUMEN se não estiver rodando.
+  Registrado no Claude Code (escopo user). Skill do Claude: `~/.claude/skills/rumen/SKILL.md`.
+- **Atualização ao vivo sem fechar:** a interface (`res/*.html`) é recarregada com `reload_ui` + `dir`. O binário novo vale
+  na próxima abertura.
+- **Testes isolados:** `RUMEN_APP_ID=rumen-test` (o Hyprland manda para `special:rumentest`, invisível) + `XDG_DATA_HOME`
+  e `RUMEN_SOCKET` temporários. Nunca usar `timeout`/kill na instância do usuário.
 - **Web3:** `ipfs://` e `ipns://` (gateway dweb.link com isolamento por subdomínio) e `.eth` (eth.limo).
 - Tema escuro; app-id `rumen` para regras do Hyprland
 

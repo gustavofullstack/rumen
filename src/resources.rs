@@ -43,6 +43,19 @@ impl Resources {
         self.ui.clone()
     }
 
+    /// Aplica páginas internas de um diretório (atualização ao vivo da interface).
+    pub fn apply_dir(&self, dir: &Path) -> std::io::Result<Vec<String>> {
+        let mut applied = Vec::new();
+        for name in ["ui.html", "newtab.html", "popup.html"] {
+            let src = dir.join(name);
+            if src.is_file() {
+                fs::copy(&src, self.root.join(name))?;
+                applied.push(name.to_owned());
+            }
+        }
+        Ok(applied)
+    }
+
     pub fn popup_url(&self) -> Url {
         self.popup.clone()
     }

@@ -24,6 +24,7 @@ use winit::event::{ElementState, KeyEvent, MouseScrollDelta};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey as WinitNamedKey};
 use winit::window::{CursorIcon, Fullscreen, Window};
 
+use crate::control::{self, ControlCmd};
 use crate::filepicker::{self, PickResult};
 use crate::keyutils::keyboard_event_from_winit;
 use crate::mode::{self, Mode};
@@ -103,6 +104,10 @@ pub struct Browser {
     file_pick: RefCell<Option<(FilePicker, std::sync::mpsc::Receiver<PickResult>)>>,
     /// Favicons já codificados como `data:image/png;base64,...`, por aba.
     favicons: RefCell<std::collections::HashMap<rumen_engine::WebViewId, String>>,
+    control: RefCell<Option<std::sync::mpsc::Receiver<control::Request>>>,
+    session_dirty: Cell<bool>,
+    last_session_save: Cell<std::time::Instant>,
+    occluded: Cell<bool>,
 }
 
 impl Browser {
@@ -156,6 +161,10 @@ impl Browser {
             waker,
             file_pick: RefCell::new(None),
             favicons: RefCell::default(),
+            control: RefCell::new(None),
+            session_dirty: Cell::new(false),
+            last_session_save: Cell::new(std::time::Instant::now()),
+            occluded: Cell::new(false),
         });
         *browser.weak_self.borrow_mut() = Rc::downgrade(&browser);
 
@@ -284,7 +293,8 @@ impl Browser {
             tabs.len()
         };
         if len == 0 {
-            self.quit.set(true);
+            // O RUMEN nunca fecha sozinho: sem abas, abre uma nova aba em branco.
+            self.open_tab(None);
             return;
         }
         let active = self.active.get();
@@ -297,6 +307,7 @@ impl Browser {
     }
 
     fn mark_dirty(&self) {
+        self.session_dirty.set(true);
         self.ui_dirty.set(true);
         self.title_dirty.set(true);
         self.window.request_redraw();
@@ -308,6 +319,8 @@ impl Browser {
     /// `spin_event_loop`, fora de callbacks do Servo.
     pub fn flush(&self) {
         self.poll_file_pick();
+        self.poll_control();
+        self.autosave_session();
         let commands: Vec<Command> = std::mem::take(&mut *self.commands.borrow_mut());
         for command in commands {
             self.run(command);
@@ -508,6 +521,158 @@ impl Browser {
         }
     }
 
+    pub fn attach_control(&self, rx: std::sync::mpsc::Receiver<control::Request>) {
+        *self.control.borrow_mut() = Some(rx);
+    }
+
+    /// Grava a sessão (abas abertas) logo após cada mudança, no máximo a cada 2 s, para que
+    /// nada se perca mesmo se o processo morrer.
+    fn autosave_session(&self) {
+        if !self.mode.persistent() || !self.session_dirty.get() {
+            return;
+        }
+        if self.last_session_save.get().elapsed() < std::time::Duration::from_secs(2) {
+            self.window.request_redraw(); // garante nova passada para salvar depois
+            return;
+        }
+        self.save_session();
+    }
+
+    pub fn save_session(&self) {
+        if !self.mode.persistent() {
+            return;
+        }
+        self.session_dirty.set(false);
+        self.last_session_save.set(std::time::Instant::now());
+        let path = data_dir().join("session.json");
+        let tmp = path.with_extension("json.tmp");
+        let json = serde_json::to_string_pretty(&self.session_urls()).unwrap_or_default();
+        // Escrita atômica: nunca deixa um session.json pela metade.
+        if std::fs::write(&tmp, json).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+            tracing::warn!("não foi possível salvar a sessão em {path:?}");
+        }
+    }
+
+    fn poll_control(&self) {
+        loop {
+            let request = match self.control.borrow().as_ref().map(|rx| rx.try_recv()) {
+                Some(Ok(r)) => r,
+                _ => return,
+            };
+            self.handle_control(request);
+        }
+    }
+
+    fn tab_at(&self, index: Option<usize>) -> Option<WebView> {
+        match index {
+            Some(i) => self.tabs.borrow().get(i).cloned(),
+            None => self.active_tab(),
+        }
+    }
+
+    fn handle_control(&self, request: control::Request) {
+        use serde_json::json;
+        match &request.cmd {
+            ControlCmd::Ping => request.ok(json!({
+                "name": "RUMEN", "version": env!("CARGO_PKG_VERSION"),
+                "engine": rumen_engine::UPSTREAM, "mode": self.mode.label(),
+                "tabs": self.tabs.borrow().len(),
+            })),
+            ControlCmd::Tabs => {
+                let active = self.active.get();
+                let tabs: Vec<_> = self.tabs.borrow().iter().enumerate().map(|(i, t)| json!({
+                    "index": i, "active": i == active,
+                    "title": t.page_title().unwrap_or_default(),
+                    "url": t.url().map(|u| u.to_string()).unwrap_or_default(),
+                    "loading": t.load_status() != LoadStatus::Complete,
+                })).collect();
+                request.ok(json!(tabs));
+            },
+            ControlCmd::Open { url, new_tab } => match self.resolve_input(url) {
+                Some(url) => {
+                    let shown = url.to_string();
+                    match (*new_tab, self.active_tab()) {
+                        (false, Some(tab)) => tab.load(url),
+                        _ => {
+                            self.open_tab(Some(url));
+                        },
+                    }
+                    self.mark_dirty();
+                    request.ok(json!({ "opened": shown, "index": self.active.get() }));
+                },
+                None => request.err("URL vazia"),
+            },
+            ControlCmd::Select { index } => {
+                if *index < self.tabs.borrow().len() {
+                    self.select_tab(*index);
+                    request.ok(json!({ "active": index }));
+                } else {
+                    request.err("aba inexistente");
+                }
+            },
+            ControlCmd::Close { index } => {
+                if *index < self.tabs.borrow().len() {
+                    self.close_tab(*index);
+                    request.ok(json!({ "tabs": self.tabs.borrow().len() }));
+                } else {
+                    request.err("aba inexistente");
+                }
+            },
+            ControlCmd::Back => {
+                self.handle_ui_message(UiMessage::Back);
+                request.ok(json!(true));
+            },
+            ControlCmd::Forward => {
+                self.handle_ui_message(UiMessage::Forward);
+                request.ok(json!(true));
+            },
+            ControlCmd::Reload => {
+                self.handle_ui_message(UiMessage::Reload);
+                request.ok(json!(true));
+            },
+            ControlCmd::Eval { js, index } => self.eval_for(request_js(js), *index, &request),
+            ControlCmd::Text { index } => self.eval_for(
+                "document.body ? document.body.innerText : ''".to_owned(),
+                *index,
+                &request,
+            ),
+            ControlCmd::ReloadUi { dir } => {
+                let applied = match dir {
+                    Some(d) => match self.resources.apply_dir(std::path::Path::new(d)) {
+                        Ok(files) => files,
+                        Err(e) => return request.err(format!("falha ao copiar de {d}: {e}")),
+                    },
+                    None => Vec::new(),
+                };
+                self.ui_ready.set(false);
+                self.popup_ready.set(false);
+                self.close_popup();
+                if let Some(ui) = self.ui.borrow().as_ref() {
+                    ui.reload();
+                }
+                if let Some(view) = self.popup_view.borrow().as_ref() {
+                    view.reload();
+                }
+                self.mark_dirty();
+                request.ok(json!({ "reloaded": true, "applied": applied }));
+            },
+        }
+    }
+
+    fn eval_for(&self, js: String, index: Option<usize>, request: &control::Request) {
+        let Some(tab) = self.tab_at(index) else {
+            return request.err("aba inexistente");
+        };
+        let reply = request.reply.clone();
+        tab.evaluate_javascript(js, move |result| {
+            let response = match result {
+                Ok(v) => serde_json::json!({ "ok": true, "result": control::js_to_json(v) }),
+                Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:?}") }),
+            };
+            let _ = reply.send(response);
+        });
+    }
+
     fn poll_file_pick(&self) {
         let done = match self.file_pick.borrow().as_ref() {
             Some((_, rx)) => rx.try_recv().ok(),
@@ -597,7 +762,18 @@ impl Browser {
 
     // ------------------------------------------------------------ pintura
 
+    /// Janela escondida (outra mesa, minimizada): não pinta, mas o motor e o controle seguem.
+    pub fn set_occluded(&self, hidden: bool) {
+        self.occluded.set(hidden);
+        if !hidden {
+            self.window.request_redraw();
+        }
+    }
+
     pub fn paint(&self) {
+        if self.occluded.get() {
+            return;
+        }
         let _ = self.rendering_context.make_current();
         self.rendering_context.prepare_for_rendering();
 
@@ -878,10 +1054,6 @@ impl Browser {
                 "w" => Some(Command::CloseTab(active)),
                 "l" => Some(Command::FocusOmnibox),
                 "r" => Some(Command::Ui(UiMessage::Reload)),
-                "q" => {
-                    self.quit.set(true);
-                    return true;
-                },
                 "=" | "+" => Some(Command::Zoom(1)),
                 "-" => Some(Command::Zoom(-1)),
                 "0" => Some(Command::Zoom(0)),
@@ -893,6 +1065,10 @@ impl Browser {
             },
             (WinitKey::Character(c), true, true, false) => match c.to_lowercase().as_str() {
                 "+" => Some(Command::Zoom(1)),
+                "q" => {
+                    self.quit.set(true);
+                    return true;
+                },
                 "n" => {
                     mode::spawn_window(Mode::Private);
                     return true;
@@ -980,6 +1156,15 @@ fn favicon_data_url(img: &rumen_engine::Image) -> Option<String> {
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(png)
     ))
+}
+
+/// Scripts de várias linhas viram uma função, para que `return` funcione.
+fn request_js(js: &str) -> String {
+    if js.contains("return ") {
+        format!("(function() {{ {js} }})()")
+    } else {
+        js.to_owned()
+    }
 }
 
 /// Domínios ENS (`.eth`) são resolvidos pelo gateway eth.limo.
